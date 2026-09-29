@@ -5,22 +5,27 @@ Payload and response shapes are taken from a live FLUX 3 video generation
 against https://api.bfl.ai/v1/flux-3-video and its regional polling URL.
 """
 
+import json
 from unittest.mock import Mock
 
 import httpx
 import pytest
 
+import litellm
 from litellm.llms.black_forest_labs.common_utils import BlackForestLabsError
 from litellm.llms.black_forest_labs.videos.transformation import (
     BlackForestLabsVideoConfig,
 )
+from litellm.llms.custom_httpx.http_handler import HTTPHandler
 from litellm.types.router import GenericLiteLLMParams
+from litellm.types.videos.main import VideoObject
 from litellm.types.videos.utils import extract_original_video_id
 
 API_BASE = "https://api.bfl.ai"
 JOB_ID = "90307d3a-deec-47cb-bdb9-bf1c5bae1f04"
 POLLING_URL = f"https://api.us7.bfl.ai/v1/get_result?id={JOB_ID}"
 SAMPLE_URL = "https://delivery.us7.bfl.ai/durable/2026081720/video.mp4?se=2026-08-17T21%3A26%3A38Z&sig=abc"
+START_VIDEO = "https://example.com/clip.mp4"
 
 
 def _response(payload: dict, status_code: int = 200) -> httpx.Response:
@@ -126,6 +131,15 @@ class TestBlackForestLabsVideoTransformation:
             ("1080x1920", "fhd"),
             ("720x1280", "hd"),
             ("fhd", "fhd"),
+            ("2560x1440", "qhd"),
+            ("3840x2160", "uhd"),
+            ("2160x3840", "uhd"),
+            ("960x960", "hd"),
+            ("1440x1440", "fhd"),
+            ("1920x1088", "fhd"),
+            ("2720x1376", "qhd"),
+            ("qhd", "qhd"),
+            ("uhd", "uhd"),
         ],
     )
     def test_size_maps_to_a_resolution_tier(self, size, expected_resolution):
@@ -291,6 +305,17 @@ class TestBlackForestLabsVideoTransformation:
 
         assert video.usage == {"credits": 30.0}
 
+    def test_draft_enhance_is_priced_as_a_full_render_at_its_default_resolution(self):
+        """The bundle, not the request, holds the clip length, so no duration is billed at submission."""
+        video = self.config.transform_video_create_response(
+            model="flux-3-video",
+            raw_response=_response({"id": JOB_ID, "polling_url": POLLING_URL}),
+            logging_obj=self.mock_logging_obj,
+            request_data={"mode": "draft_enhance", "draft_cache": "bundle"},
+        )
+
+        assert video.usage == {"video_resolution": "fhd"}
+
     def test_fractional_progress_is_reported_as_a_percentage(self):
         video = self.config.transform_video_status_retrieve_response(
             raw_response=_response({"id": JOB_ID, "status": "Generating", "progress": 0.42}),
@@ -358,3 +383,63 @@ class TestBlackForestLabsVideoTransformation:
 
         with pytest.raises(BlackForestLabsError, match="BFL_API_KEY is not set"):
             self.config.validate_environment(headers={}, model="flux-3-video")
+
+
+@pytest.fixture
+def local_model_cost_map(monkeypatch):
+    """Price from this branch's bundled cost map, not the network-fetched main copy without the FLUX 3 tiers."""
+    original_model_cost = litellm.model_cost
+    monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    litellm.model_cost = litellm.get_model_cost_map(url="")
+    litellm.get_model_info.cache_clear()
+    try:
+        yield
+    finally:
+        litellm.model_cost = original_model_cost
+        litellm.get_model_info.cache_clear()
+
+
+def _generate_video(**params) -> tuple[VideoObject, dict]:
+    """Submit through litellm against a mocked BFL; return the video and the JSON body BFL received."""
+    bfl = Mock(return_value=httpx.Response(200, json={"id": JOB_ID, "polling_url": POLLING_URL, "cost": None}))
+    video = litellm.video_generation(
+        model="black_forest_labs/flux-3-video",
+        prompt="A fox runs through dawn mist.",
+        seconds="5",
+        api_key="test-key",
+        client=HTTPHandler(client=httpx.Client(transport=httpx.MockTransport(bfl))),
+        **params,
+    )
+    return video, json.loads(bfl.call_args.args[0].content)
+
+
+@pytest.mark.parametrize(
+    "params, expected_resolution",
+    [
+        ({"size": "3840x2160"}, "uhd"),
+        ({"size": "2560x1440"}, "qhd"),
+        ({"size": "uhd"}, "uhd"),
+        ({"extra_body": {"resolution": "qhd"}}, "qhd"),
+    ],
+)
+def test_qhd_and_uhd_reach_the_request_body(params, expected_resolution):
+    _, body = _generate_video(**params)
+
+    assert body["resolution"] == expected_resolution
+
+
+@pytest.mark.parametrize(
+    "params, expected_cost",
+    [
+        pytest.param({"size": "1280x720"}, 0.17 * 5, id="t2v-hd"),
+        pytest.param({"size": "3840x2160"}, 0.80 * 5, id="t2v-uhd"),
+        pytest.param({"size": "1920x1080", "input_reference": "https://example.com/a.png"}, 0.29 * 5, id="i2v-fhd"),
+        pytest.param({"size": "3840x2160", "extra_body": {"start_video": START_VIDEO}}, 0.95 * 5, id="v2v-uhd"),
+        pytest.param({"extra_body": {"draft": True}}, 0.06 * 5, id="t2v-draft"),
+        pytest.param({"extra_body": {"start_video": START_VIDEO, "draft": True}}, 0.12 * 5, id="v2v-draft"),
+    ],
+)
+def test_cost_is_priced_by_mode_and_resolution(local_model_cost_map, params, expected_cost):
+    video, _ = _generate_video(**params)
+
+    assert video._hidden_params["response_cost"] == pytest.approx(expected_cost)

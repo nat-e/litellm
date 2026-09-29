@@ -5392,6 +5392,7 @@ def _is_potential_model_name_in_model_cost(
 
 
 _ABOVE_THRESHOLD_COST_KEY: Final = re.compile(r"_above_\d+k?_tokens$")
+_VIDEO_TIER_COST_KEY: Final = re.compile(r"^output_cost_per_second_[a-z0-9_]+$")
 
 
 def _get_model_info_helper(
@@ -5734,7 +5735,10 @@ def _get_model_info_helper(
                 supports_image_size=_model_info.get("supports_image_size", None),
             )
             for cost_key, cost_value in _model_info.items():
-                if cost_key not in returned_model_info and _ABOVE_THRESHOLD_COST_KEY.search(cost_key) is not None:
+                if cost_key not in returned_model_info and (
+                    _ABOVE_THRESHOLD_COST_KEY.search(cost_key) is not None
+                    or _VIDEO_TIER_COST_KEY.match(cost_key) is not None
+                ):
                     returned_model_info[cost_key] = cost_value
             return returned_model_info
     except Exception as e:

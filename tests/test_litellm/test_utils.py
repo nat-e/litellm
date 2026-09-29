@@ -1036,6 +1036,7 @@ def test_aaamodel_prices_and_context_window_json_is_valid():
                     },
                 },
             },
+            "patternProperties": {"^output_cost_per_second_[a-z0-9_]+$": {"type": "number"}},
             "additionalProperties": False,
         },
     }

@@ -11875,7 +11875,16 @@
     "black_forest_labs/flux-3-video": {
         "litellm_provider": "black_forest_labs",
         "mode": "video_generation",
-        "output_cost_per_video_per_second": 0.17,
+        "output_cost_per_second": 0.17,
+        "output_cost_per_second_draft": 0.06,
+        "output_cost_per_second_fhd": 0.29,
+        "output_cost_per_second_qhd": 0.4,
+        "output_cost_per_second_uhd": 0.8,
+        "output_cost_per_second_v2v_draft": 0.12,
+        "output_cost_per_second_v2v_fhd": 0.53,
+        "output_cost_per_second_v2v_hd": 0.41,
+        "output_cost_per_second_v2v_qhd": 0.65,
+        "output_cost_per_second_v2v_uhd": 0.95,
         "source": "https://docs.bfl.ai/quick_start/pricing",
         "supported_modalities": [
             "text",
@@ -11886,7 +11895,7 @@
             "video"
         ],
         "metadata": {
-            "comment": "Per-second pricing varies by mode and resolution: t2v and i2v are $0.17/s hd and $0.29/s fhd, v2v is $0.43/s hd and $0.54/s fhd, drafts are $0.06/s (t2v, i2v) and $0.12/s (v2v). The t2v hd rate is used here."
+            "comment": "Per-second rate by mode and resolution class, picked by usage.video_resolution: t2v and i2v use the class name (hd is the base rate), v2v prefixes it with v2v_, and drafts use draft. draft_enhance has no published rate and is assumed to bill as a t2v render at its resolution."
         }
     },
     "cerebras/llama-3.3-70b": {

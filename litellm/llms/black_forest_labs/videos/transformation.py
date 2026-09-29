@@ -46,7 +46,10 @@ else:
 
 VIDEO_MODELS: Final[Mapping[str, str]] = MappingProxyType({"flux-3-video": "/v1/flux-3-video"})
 
-RESOLUTIONS: Final = ("hd", "fhd")
+RESOLUTIONS: Final = ("hd", "fhd", "qhd", "uhd")
+# Largest frame per tier in https://docs.bfl.ai/flux_3/flux3_video#resolution. Each tier is a pixel
+# budget across aspect ratios, which is why no single side length separates them.
+_MAX_PIXELS_PER_RESOLUTION: Final = (("hd", 960 * 960), ("fhd", 1920 * 1088), ("qhd", 2720 * 1376))
 ASPECT_RATIOS: Final = ("21:9", "2:1", "16:9", "4:3", "1:1", "3:4", "9:16", "auto")
 MIN_DURATION: Final = 5
 MAX_DURATION: Final = 20
@@ -177,8 +180,8 @@ class BlackForestLabsVideoConfig(BaseVideoConfig):
 
     def _map_size_to_resolution(self, size: object) -> str | None:
         """
-        FLUX 3 takes a named tier, not pixel dimensions, so map by the shorter
-        side: at most 720 is ``hd`` and anything larger is ``fhd``.
+        FLUX 3 takes a named tier, not pixel dimensions, so map by pixel count
+        to the smallest tier that covers the requested size.
         """
         if not isinstance(size, str):
             return None
@@ -190,7 +193,8 @@ class BlackForestLabsVideoConfig(BaseVideoConfig):
             width, height = (int(part) for part in size.lower().split("x", 1))
         except ValueError:
             return None
-        return "hd" if min(width, height) <= 720 else "fhd"
+        pixels: Final = width * height
+        return next((tier for tier, max_pixels in _MAX_PIXELS_PER_RESOLUTION if pixels <= max_pixels), "uhd")
 
     def validate_environment(
         self,
@@ -278,6 +282,15 @@ class BlackForestLabsVideoConfig(BaseVideoConfig):
             return "i2v"
         return "t2v"
 
+    def _pricing_tier(self, request_data: Mapping[str, object]) -> str:
+        """The ``output_cost_per_second_<tier>`` suffix BFL bills this request at."""
+        mode: Final = self._infer_mode(request_data)
+        # Assumption: BFL publishes no draft_enhance rate. fal bills a 1080p enhance at $0.29/s, BFL's t2v fhd
+        # rate, so draft_enhance is priced as a full t2v render at its resolution (fhd by default).
+        resolution: Final = request_data.get("resolution") or ("fhd" if mode == "draft_enhance" else "hd")
+        tier: Final = "draft" if request_data.get("draft") else str(resolution)
+        return f"v2v_{tier}" if mode == "v2v" else tier
+
     def transform_video_create_response(
         self,
         model: str,
@@ -323,6 +336,14 @@ class BlackForestLabsVideoConfig(BaseVideoConfig):
                 video_obj.seconds = str(request_data["duration"])
             if request_data.get("resolution"):
                 video_obj.size = str(request_data["resolution"])
+            video_obj.usage = {  # mutable-ok: VideoObject field
+                key: value
+                for key, value in (
+                    ("video_resolution", self._pricing_tier(request_data)),
+                    ("duration_seconds", float(video_obj.seconds) if video_obj.seconds else None),
+                )
+                if value is not None
+            }
 
         if custom_llm_provider:
             video_obj.id = encode_video_id_with_provider(regional_job_id, custom_llm_provider, model)

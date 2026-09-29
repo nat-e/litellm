@@ -419,6 +419,42 @@
           "type": "number",
           "minimum": 0
         },
+        "output_cost_per_second_draft": {
+          "type": "number",
+          "minimum": 0
+        },
+        "output_cost_per_second_fhd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "output_cost_per_second_qhd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "output_cost_per_second_uhd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "output_cost_per_second_v2v_draft": {
+          "type": "number",
+          "minimum": 0
+        },
+        "output_cost_per_second_v2v_fhd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "output_cost_per_second_v2v_hd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "output_cost_per_second_v2v_qhd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "output_cost_per_second_v2v_uhd": {
+          "type": "number",
+          "minimum": 0
+        },
         "output_cost_per_token": {
           "type": "number",
           "minimum": 0,
